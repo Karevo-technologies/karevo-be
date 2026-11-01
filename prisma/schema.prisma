@@ -1,0 +1,279 @@
+// Karevo users dashboard data model. See the backend spec "Data model" section
+// and docs/DECISIONS.md for every field that is not in the spec.
+//
+// Conventions:
+// - ids are UUIDs, timestamps are UTC (timestamptz).
+// - "*Enc" columns hold AES-256-GCM ciphertext from CryptoService; never query them.
+// - "*Hash" lookup columns hold an HMAC (blind index) or a one-way hash.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum NinStatus {
+  pending
+  verified
+  failed
+}
+
+enum OrgKind {
+  hospital
+  insurer
+  pharmacy
+  lab
+}
+
+/// Shared by consent scopes, share-token categories and record categories.
+enum ShareCategory {
+  id
+  blood
+  allergies
+  vaccines
+  scripts
+  full
+}
+
+enum ConsentStatus {
+  pending
+  active
+  declined
+  revoked
+  expired
+}
+
+enum ShareExpiry {
+  h1     @map("1h")
+  h24    @map("24h")
+  d7     @map("7d")
+  single
+}
+
+enum LinkedIdType {
+  nin
+  passport
+  drivers_licence
+  voters_card
+}
+
+enum LinkedIdStatus {
+  pending
+  verified
+  failed
+}
+
+enum ActivityKind {
+  create
+  consent
+  auth
+}
+
+enum ExportStatus {
+  queued
+  processing
+  completed
+  failed
+}
+
+model User {
+  id               String    @id @default(uuid()) @db.Uuid
+  karevoId         String    @unique
+  name             String
+  /// Stored lower-cased; uniqueness is case-insensitive by construction.
+  email            String    @unique
+  passwordHash     String
+  ninEnc           String
+  /// HMAC of the NIN, for uniqueness checks and login comparison without decrypting.
+  ninHash          String    @unique
+  ninLast4         String
+  ninStatus        NinStatus @default(pending)
+  ninCheckedAt     DateTime?
+  pinHash          String?
+  pinFailedCount   Int       @default(0)
+  pinLockedUntil   DateTime?
+  twoFactorEnabled Boolean   @default(false)
+  /// TOTP secret, encrypted. Set on PUT /me/2fa, active once confirmed.
+  twoFactorSecretEnc String?
+  deactivatedAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sessions       Session[]
+  records        HealthRecord[]
+  consents       ConsentRequest[]
+  shareTokens    ShareToken[]
+  linkedIds      LinkedId[]
+  preferences    Preferences?
+  activity       ActivityEvent[]
+  scanRequests   ScanRequest[]
+  passwordResets PasswordResetToken[]
+  exportJobs     DataExportJob[]
+}
+
+/// One row per refresh token family; this is what the Devices list shows.
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the current refresh token secret. Rotated on every refresh.
+  refreshTokenHash String
+  deviceName       String
+  /// "Browser · OS"
+  detail           String
+  location         String?
+  ip               String?
+  userAgent        String?
+  lastActiveAt     DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([userId, revokedAt])
+}
+
+model Organisation {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  kind      OrgKind
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  records      HealthRecord[]
+  consents     ConsentRequest[]
+  scanRequests ScanRequest[]
+}
+
+model HealthRecord {
+  id         String        @id @default(uuid()) @db.Uuid
+  userId     String        @db.Uuid
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issuedById String        @db.Uuid
+  issuedBy   Organisation  @relation(fields: [issuedById], references: [id])
+  /// Free-text display type, e.g. "Blood Test Result".
+  type       String
+  /// Which consent scope / share category covers this record (never "full").
+  category   ShareCategory
+  issuedDate DateTime      @db.Date
+  summary    String
+  detailsEnc String
+  receivedAt DateTime      @default(now())
+
+  @@index([userId, receivedAt(sort: Desc)])
+}
+
+/// Pending, active and history tabs are all views of `status`.
+model ConsentRequest {
+  id            String          @id @default(uuid()) @db.Uuid
+  userId        String          @db.Uuid
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId         String          @db.Uuid
+  org           Organisation    @relation(fields: [orgId], references: [id])
+  scope         ShareCategory[]
+  purpose       String
+  requestedDays Int
+  requestedAt   DateTime        @default(now())
+  status        ConsentStatus   @default(pending)
+  grantedDays   Int?
+  grantedAt     DateTime?
+  expiresAt     DateTime?
+  resolvedAt    DateTime?
+  note          String?
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+}
+
+model ShareToken {
+  id         String          @id @default(uuid()) @db.Uuid
+  userId     String          @db.Uuid
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// HMAC of the XXXX-XXXX code. The plain code is returned once, on create.
+  codeHash   String          @unique
+  label      String?
+  categories ShareCategory[]
+  expiry     ShareExpiry
+  /// Null for `single` tokens, which live until first use.
+  expiresAt  DateTime?
+  usedAt     DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime        @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+/// An organisation's QR request, resolved and confirmed by the user (/scan).
+model ScanRequest {
+  id                  String          @id @default(uuid()) @db.Uuid
+  orgId               String          @db.Uuid
+  org                 Organisation    @relation(fields: [orgId], references: [id])
+  /// Set when a user resolves the QR payload.
+  userId              String?         @db.Uuid
+  user                User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedCategories ShareCategory[]
+  grantedCategories   ShareCategory[]
+  expiresAt           DateTime
+  confirmedAt         DateTime?
+  createdAt           DateTime        @default(now())
+}
+
+model LinkedId {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @db.Uuid
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      LinkedIdType
+  numberEnc String
+  numberLast4 String
+  status    LinkedIdStatus @default(pending)
+  createdAt DateTime       @default(now())
+
+  @@unique([userId, type])
+}
+
+model Preferences {
+  userId             String  @id @db.Uuid
+  user               User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifyEmail        Boolean @default(true)
+  notifySms          Boolean @default(false)
+  notifyPush         Boolean @default(true)
+  autoSignOutMinutes Int     @default(15)
+  offlineEnabled     Boolean @default(false)
+  offlineCardOnly    Boolean @default(true)
+}
+
+/// Append-only audit log shown on the Security page.
+model ActivityEvent {
+  id         String       @id @default(uuid()) @db.Uuid
+  userId     String       @db.Uuid
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       ActivityKind
+  event      String
+  device     String?
+  location   String?
+  metadata   Json?
+  occurredAt DateTime     @default(now())
+
+  @@index([userId, occurredAt(sort: Desc)])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model DataExportJob {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @db.Uuid
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      ExportStatus @default(queued)
+  requestedAt DateTime     @default(now())
+  completedAt DateTime?
+}

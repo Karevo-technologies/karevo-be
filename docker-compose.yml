@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: karevo
+      POSTGRES_PASSWORD: karevo
+      POSTGRES_DB: karevo
+    ports:
+      - "5432:5432"
+    volumes:
+      - karevo-pg:/var/lib/postgresql/data
+
+volumes:
+  karevo-pg:
