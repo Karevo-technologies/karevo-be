@@ -38,6 +38,7 @@ describe('App wiring', () => {
       },
       user: { findMany: jest.fn(async () => []) },
       consentRequest: { findMany: jest.fn(async () => []) },
+      healthRecord: { findMany: jest.fn(async () => []) },
     };
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
@@ -86,10 +87,10 @@ describe('App wiring', () => {
     expect(res.body.error.fields).toHaveProperty('isAdmin');
   });
 
-  it('reaches stubbed endpoints and returns 501 NOT_IMPLEMENTED', async () => {
+  it('returns paginated data for implemented endpoints', async () => {
     const res = await http().get('/api/v1/records').set('Authorization', `Bearer ${token}`);
-    expect(res.status).toBe(501);
-    expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: [], nextCursor: null });
   });
 
   it('blocks NIN-gated actions until the NIN is verified', async () => {

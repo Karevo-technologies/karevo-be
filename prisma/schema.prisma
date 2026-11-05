@@ -98,6 +98,8 @@ model User {
   twoFactorEnabled Boolean   @default(false)
   /// TOTP secret, encrypted. Set on PUT /me/2fa, active once confirmed.
   twoFactorSecretEnc String?
+  /// Last TOTP time step accepted; codes at or below it are refused (no replay).
+  twoFactorLastStep Int?
   deactivatedAt    DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt

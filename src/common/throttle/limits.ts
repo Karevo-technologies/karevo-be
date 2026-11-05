@@ -7,5 +7,7 @@ export const LIMITS = {
   register: { default: { limit: 10, ttl: 60 * MINUTE } },
   passwordReset: { default: { limit: 5, ttl: 60 * MINUTE } },
   pin: { default: { limit: 10, ttl: 15 * MINUTE } },
+  /** Routes that check a password or 2FA code for a signed-in user. */
+  accountSecurity: { default: { limit: 10, ttl: 15 * MINUTE } },
   shareTokenCreate: { default: { limit: 20, ttl: 60 * MINUTE } },
 };

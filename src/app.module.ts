@@ -10,6 +10,7 @@ import { KarevoThrottlerGuard } from './common/throttle/karevo-throttler.guard';
 import { validateEnv } from './config/env';
 import { CryptoModule } from './crypto/crypto.module';
 import { JobsModule } from './jobs/jobs.module';
+import { MailModule } from './mail/mail.module';
 import { AccountModule } from './modules/account/account.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ConsentsModule } from './modules/consents/consents.module';
@@ -33,6 +34,7 @@ import { PrismaModule } from './prisma/prisma.module';
     SharingModule,
     SettingsModule,
     JobsModule,
+    MailModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: KarevoThrottlerGuard },
