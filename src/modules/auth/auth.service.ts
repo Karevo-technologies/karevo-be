@@ -3,8 +3,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ActivityService } from '../../activity/activity.service';
 import { AppException } from '../../common/errors/app.exception';
 import { toUserView } from '../../common/presenters/user.presenter';
-import { notImplemented } from '../../common/stub';
 import { CryptoService } from '../../crypto/crypto.service';
+import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ClientContext, describeDevice } from './device';
 import {
@@ -18,6 +18,7 @@ import {
 } from './dto/auth.dto';
 import { isBreachedPassword } from './password-policy';
 import { SessionService } from './session.service';
+import { consumeTotpCode } from './two-factor';
 
 const TWO_FACTOR_CHALLENGE_TTL = 300;
 
@@ -36,6 +37,7 @@ export class AuthService {
     private readonly sessions: SessionService,
     private readonly activity: ActivityService,
     private readonly jwt: JwtService,
+    private readonly mail: MailService,
   ) {}
 
   async register(dto: RegisterDto, client: ClientContext): Promise<{ body: AuthResponse; refreshToken: string }> {
@@ -117,8 +119,40 @@ export class AuthService {
    * 5 min) and the TOTP `code` against the decrypted `twoFactorSecretEnc`,
    * then create the session exactly as `login` does. See README "2FA".
    */
-  async verifyTwoFactor(_dto: TwoFactorVerifyDto, _client: ClientContext): Promise<{ body: AuthResponse; refreshToken: string }> {
-    return notImplemented('src/modules/auth/README.md#2fa');
+  async verifyTwoFactor(
+    dto: TwoFactorVerifyDto,
+    client: ClientContext,
+  ): Promise<{ body: AuthResponse; refreshToken: string }> {
+    let payload: any;
+    try {
+      payload = await this.jwt.verifyAsync(dto.challengeToken);
+    } catch {
+      throw AppException.unauthenticated('Invalid or expired 2FA challenge token.');
+    }
+
+    if (payload?.typ !== '2fa' || !payload?.sub) {
+      throw AppException.unauthenticated('Invalid 2FA challenge token.');
+    }
+
+    const userId = payload.sub as string;
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.twoFactorSecretEnc || user.deactivatedAt) {
+      throw AppException.invalidCredentials();
+    }
+
+    const secret = this.crypto.decrypt(user.twoFactorSecretEnc);
+    const codeOk = await consumeTotpCode(this.prisma, user, secret, dto.code);
+    if (!codeOk) {
+      await this.activity.record(user.id, 'auth', 'Failed 2FA sign-in attempt', {
+        device: describeDevice(client.userAgent).deviceName,
+      });
+      throw AppException.invalidCredentials();
+    }
+
+    const { session, refreshToken } = await this.sessions.create(user.id, client);
+    await this.activity.record(user.id, 'auth', 'Signed in', this.where(session));
+    const tokens = await this.sessions.issueAccessToken(user.id, session.id);
+    return { body: { ...tokens, user: toUserView(user) }, refreshToken };
   }
 
   async refresh(refreshToken: string) {
@@ -137,16 +171,80 @@ export class AuthService {
    * Always 202, whether or not the email exists. Create a PasswordResetToken
    * (store sha256 of a randomToken(), 30 min expiry) and email the link.
    */
-  async forgotPassword(_dto: ForgotPasswordDto): Promise<void> {
-    return notImplemented('src/modules/auth/README.md#password-reset');
+  async forgotPassword(dto: ForgotPasswordDto): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user || user.deactivatedAt) {
+      return;
+    }
+
+    const token = this.crypto.randomToken();
+    const tokenHash = this.crypto.sha256(token);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 30 * 60 * 1000);
+
+    // Only the newest link works: requesting another one cancels the earlier ones.
+    await this.prisma.$transaction([
+      this.prisma.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: now },
+      }),
+      this.prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      }),
+    ]);
+
+    await this.mail.sendPasswordResetLink({
+      to: user.email,
+      name: user.name,
+      token,
+    });
   }
 
   /**
    * Validate the token, set the new password (same rules as register), mark the
    * token used, revoke every session, and record an `auth` activity event.
    */
-  async resetPassword(_dto: ResetPasswordDto): Promise<void> {
-    return notImplemented('src/modules/auth/README.md#password-reset');
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    const tokenHash = this.crypto.sha256(dto.token);
+    const resetToken = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: { select: { deactivatedAt: true } } },
+    });
+
+    const now = new Date();
+    const invalidLink = () => AppException.validation({ token: 'Invalid or expired password reset link' });
+    if (!resetToken || resetToken.usedAt || resetToken.expiresAt <= now || resetToken.user.deactivatedAt) {
+      throw invalidLink();
+    }
+
+    if (isBreachedPassword(dto.newPassword)) {
+      throw AppException.validation({ newPassword: 'This password is too common. Choose another.' });
+    }
+
+    const passwordHash = await this.crypto.hashSecret(dto.newPassword);
+
+    await this.prisma.$transaction(async (tx) => {
+      // Claim the token first; a concurrent reset with the same token gets count 0.
+      const claimed = await tx.passwordResetToken.updateMany({
+        where: { id: resetToken.id, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claimed.count === 0) throw invalidLink();
+
+      await tx.user.update({
+        where: { id: resetToken.userId },
+        data: { passwordHash },
+      });
+      await tx.session.updateMany({
+        where: { userId: resetToken.userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      await this.activity.record(resetToken.userId, 'auth', 'Password reset', {}, tx);
+    });
   }
 
   private where(session: { deviceName: string; location: string | null }) {

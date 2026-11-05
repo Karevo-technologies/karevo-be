@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Header, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/auth/decorators';
 import { RequestUser } from '../../common/auth/request-user';
@@ -19,6 +19,7 @@ export class RecordsController {
   }
 
   @Get(':id')
+  @Header('Cache-Control', 'no-store')
   get(@CurrentUser() me: RequestUser, @Param('id', ParseUUIDPipe) id: string): Promise<RecordView> {
     return this.records.get(me, id);
   }

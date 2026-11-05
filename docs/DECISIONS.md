@@ -22,7 +22,9 @@ The spec has `PUT /me/2fa` return a `setupUri`, but it has no way to confirm the
 
 - `PUT /me/2fa {enabled: true}` stores an encrypted TOTP secret and returns `{ enabled: false, setupUri }`. 2FA is not active yet.
 - `POST /me/2fa/confirm {code}` checks the code against the secret, sets `twoFactorEnabled`, and returns `{ enabled: true }`.
-- `PUT /me/2fa {enabled: false}` should require a current code or the password. The DTO does not take either yet; the account module owner decides which.
+- `PUT /me/2fa {enabled: true}` returns `409` while 2FA is already on, so the active secret is never replaced.
+- `PUT /me/2fa {enabled: false}` requires either `password` or a current `code` while 2FA is on. Cancelling an unconfirmed setup needs neither.
+- Each TOTP code works once: the accepted time step is stored in `twoFactorLastStep`, and codes at or below it are refused.
 - When 2FA is on, `POST /auth/login` returns `200 { twoFactorRequired: true, challengeToken }`, with no tokens and no cookie. `challengeToken` is a JWT with `typ: "2fa"` that lasts 5 minutes. `POST /auth/2fa/verify {challengeToken, code}` then completes the login exactly as a normal login does.
 
 TOTP only. This answers the spec's open question "TOTP app, SMS, or both?" provisionally: SMS adds cost and SIM-swap risk.

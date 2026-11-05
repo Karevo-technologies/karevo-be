@@ -48,6 +48,15 @@ export class VerifyPinDto {
 export class SetTwoFactorDto {
   @IsBoolean()
   enabled: boolean;
+
+  /** Turning 2FA off needs either the password or a current code. */
+  @IsOptional()
+  @IsString()
+  password?: string;
+
+  @IsOptional()
+  @Matches(/^\d{6}$/, { message: 'Code must be 6 digits' })
+  code?: string;
 }
 
 export class ConfirmTwoFactorDto {
