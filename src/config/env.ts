@@ -27,6 +27,8 @@ export const envSchema = z.object({
   DATA_ENCRYPTION_KEY: base64Key('DATA_ENCRYPTION_KEY'),
   BLIND_INDEX_KEY: base64Key('BLIND_INDEX_KEY'),
   NIN_PROVIDER: z.enum(['stub']).default('stub'),
+  /** Query the Have I Been Pwned range API for new passwords (D-11). */
+  BREACHED_PASSWORD_CHECK: boolish.default('true'),
 });
 
 export type Env = z.infer<typeof envSchema>;

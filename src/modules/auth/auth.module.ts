@@ -6,6 +6,7 @@ import { Env } from '../../config/env';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { PasswordPolicyService } from './password-policy';
 import { SessionService } from './session.service';
 
 @Global()
@@ -21,8 +22,8 @@ import { SessionService } from './session.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, SessionService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
-  // SettingsModule uses SessionService for the Devices endpoints.
-  exports: [SessionService, JwtModule],
+  providers: [AuthService, SessionService, PasswordPolicyService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
+  // SettingsModule uses SessionService for the Devices endpoints; AccountModule uses PasswordPolicyService.
+  exports: [SessionService, PasswordPolicyService, JwtModule],
 })
 export class AuthModule {}
