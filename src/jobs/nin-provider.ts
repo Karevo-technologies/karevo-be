@@ -8,6 +8,9 @@ export type NinCheckResult = 'verified' | 'failed' | 'pending';
  * Return `pending` when the provider is unavailable, so the job retries later.
  */
 export abstract class NinProvider {
+  /** False for providers that never decide on their own (manual): the job then skips its run. */
+  readonly automatic: boolean = true;
+
   abstract verify(nin: string, name: string): Promise<NinCheckResult>;
 }
 
@@ -19,5 +22,18 @@ export class StubNinProvider extends NinProvider {
   async verify(_nin: string, name: string): Promise<NinCheckResult> {
     this.logger.warn(`Stub NIN provider auto-verified "${name}"`);
     return 'verified';
+  }
+}
+
+/**
+ * Production default until a NIN vendor is contracted: nothing is decided
+ * automatically. Karevo admins verify NINs with POST /admin/users/:id/nin.
+ */
+@Injectable()
+export class ManualNinProvider extends NinProvider {
+  override readonly automatic = false;
+
+  async verify(): Promise<NinCheckResult> {
+    return 'pending';
   }
 }

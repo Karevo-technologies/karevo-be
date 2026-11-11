@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Env } from '../config/env';
 import { DataExportJob } from './data-export.job';
 import { ExpiryJob } from './expiry.job';
-import { NinProvider, StubNinProvider } from './nin-provider';
+import { ManualNinProvider, NinProvider, StubNinProvider } from './nin-provider';
 import { NinVerificationJob } from './nin-verification.job';
 
 @Module({
@@ -9,8 +11,13 @@ import { NinVerificationJob } from './nin-verification.job';
     ExpiryJob,
     NinVerificationJob,
     DataExportJob,
-    // Swap for the real provider once chosen; env.ts already rejects the stub in production.
-    { provide: NinProvider, useClass: StubNinProvider },
+    // NIN_PROVIDER picks the provider; env.ts rejects the stub in production. Add the vendor's provider here once chosen.
+    {
+      provide: NinProvider,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) =>
+        config.get('NIN_PROVIDER', { infer: true }) === 'manual' ? new ManualNinProvider() : new StubNinProvider(),
+    },
   ],
 })
 export class JobsModule {}

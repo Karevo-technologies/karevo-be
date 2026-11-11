@@ -10,10 +10,13 @@ import { KarevoThrottlerGuard } from './common/throttle/karevo-throttler.guard';
 import { validateEnv } from './config/env';
 import { CryptoModule } from './crypto/crypto.module';
 import { JobsModule } from './jobs/jobs.module';
+import { HealthController } from './health/health.controller';
 import { MailModule } from './mail/mail.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AccountModule } from './modules/account/account.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ConsentsModule } from './modules/consents/consents.module';
+import { OrgModule } from './modules/org/org.module';
 import { RecordsModule } from './modules/records/records.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { SharingModule } from './modules/sharing/sharing.module';
@@ -35,7 +38,10 @@ import { PrismaModule } from './prisma/prisma.module';
     SettingsModule,
     JobsModule,
     MailModule,
+    OrgModule,
+    AdminModule,
   ],
+  controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: KarevoThrottlerGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

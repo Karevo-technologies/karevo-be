@@ -86,7 +86,7 @@ export class ConsentsService {
     return this.prisma.$transaction(async (tx) => {
       const consent = await tx.consentRequest.findFirst({
         where: { id, userId: me.id },
-        include: { org: { select: ORG_SELECT } },
+        include: { org: { select: ORG_SELECT }, user: { select: { karevoId: true } } },
       });
       if (!consent) throw AppException.notFound('Consent request');
       if (consent.status !== 'pending') {
@@ -117,6 +117,7 @@ export class ConsentsService {
         { metadata: { consentId: id } },
         tx,
       );
+      await this.activity.recordOrg(consent.orgId, null, 'Request Approved', `${consent.user.karevoId} approved access to ${consent.scope.join(', ')} for ${dto.days} days`, 'approved', tx);
 
       const updated = (await tx.consentRequest.findUniqueOrThrow({
         where: { id },
@@ -131,7 +132,7 @@ export class ConsentsService {
     return this.prisma.$transaction(async (tx) => {
       const consent = await tx.consentRequest.findFirst({
         where: { id, userId: me.id },
-        include: { org: { select: ORG_SELECT } },
+        include: { org: { select: ORG_SELECT }, user: { select: { karevoId: true } } },
       });
       if (!consent) throw AppException.notFound('Consent request');
       if (consent.status !== 'pending') {
@@ -158,6 +159,7 @@ export class ConsentsService {
         { metadata: { consentId: id } },
         tx,
       );
+      await this.activity.recordOrg(consent.orgId, null, 'Request Declined', `${consent.user.karevoId} declined access to ${consent.scope.join(', ')}`, 'declined', tx);
 
       const updated = (await tx.consentRequest.findUniqueOrThrow({
         where: { id },
@@ -172,7 +174,7 @@ export class ConsentsService {
     return this.prisma.$transaction(async (tx) => {
       const consent = await tx.consentRequest.findFirst({
         where: { id, userId: me.id },
-        include: { org: { select: ORG_SELECT } },
+        include: { org: { select: ORG_SELECT }, user: { select: { karevoId: true } } },
       });
       if (!consent) throw AppException.notFound('Consent request');
 
@@ -200,6 +202,7 @@ export class ConsentsService {
         { metadata: { consentId: id } },
         tx,
       );
+      await this.activity.recordOrg(consent.orgId, null, 'Access Revoked', `${consent.user.karevoId} revoked access to ${consent.scope.join(', ')}`, 'declined', tx);
 
       const updated = (await tx.consentRequest.findUniqueOrThrow({
         where: { id },

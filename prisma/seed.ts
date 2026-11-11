@@ -6,6 +6,14 @@
  *   Password: KarevoDemo#2026
  *   NIN:      12345678901
  *
+ * Organisation dashboard (Lagos University Teaching Hospital, verified):
+ *   Admin:    org.admin@karevo.test / KarevoOrg#2026
+ *   Member:   org.member@karevo.test / KarevoOrg#2026
+ *
+ * Admin dashboard:
+ *   Super admin: super.admin@karevo.test / KarevoAdmin#2026
+ *   (MFA is set up on first sign-in: scan the setup QR with an authenticator app.)
+ *
  * Run with `npm run db:seed`. Re-running replaces the demo user's data.
  */
 import { PrismaClient } from '@prisma/client';
@@ -15,6 +23,8 @@ import { CryptoService } from '../src/crypto/crypto.service';
 
 const DEMO = { email: 'demo@karevo.ng', password: 'KarevoDemo#2026', nin: '12345678901', name: 'Adaeze Okafor' };
 const DAY = 24 * 60 * 60 * 1000;
+const ORG_PASSWORD = 'KarevoOrg#2026';
+const ADMIN_PASSWORD = 'KarevoAdmin#2026';
 
 async function main() {
   const env = validateEnv(process.env);
@@ -23,7 +33,12 @@ async function main() {
   const prisma = new PrismaClient();
   const crypto = new CryptoService(new ConfigService(env) as never);
 
-  await prisma.user.deleteMany({ where: { email: DEMO.email } });
+  // Record-access events are append-only (database trigger); the seed is the one
+  // place allowed to clear them, inside a transaction that switches the guard off.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('karevo.audit_maintenance', 'on', true)`;
+    await tx.user.deleteMany({ where: { email: DEMO.email } });
+  });
 
   const [synlab, gwarinpa, luth, axa, medplus] = await Promise.all(
     [
@@ -34,7 +49,7 @@ async function main() {
       { name: 'MedPlus Pharmacy, Ikeja', kind: 'pharmacy' as const },
     ].map(async (o) =>
       (await prisma.organisation.findFirst({ where: { name: o.name } })) ??
-      prisma.organisation.create({ data: { ...o, verified: true } }),
+      prisma.organisation.create({ data: { ...o, verified: true, status: 'verified' } }),
     ),
   );
 
@@ -138,7 +153,35 @@ async function main() {
     ],
   });
 
+  // Organisation staff for LUTH. Upserts, so re-seeding keeps their history.
+  const orgPasswordHash = await crypto.hashSecret(ORG_PASSWORD);
+  for (const m of [
+    { email: 'org.admin@karevo.test', name: 'Dr. Aminu Bello', role: 'admin' as const },
+    { email: 'org.member@karevo.test', name: 'Mrs. Folake Adewale', role: 'member' as const },
+  ]) {
+    const data = { orgId: luth.id, name: m.name, role: m.role, status: 'active' as const, passwordHash: orgPasswordHash, activatedAt: new Date(), removedAt: null };
+    await prisma.orgMember.upsert({ where: { email: m.email }, create: { email: m.email, ...data }, update: data });
+  }
+  await prisma.organisation.update({
+    where: { id: luth.id },
+    data: { cacNumber: 'RC-100234', email: 'records@luth.example', phone: '+2348012345678', authorisedPerson: 'Dr. Aminu Bello' },
+  });
+
+  // Super admin with MFA reset, so the next sign-in walks through authenticator setup.
+  const adminData = {
+    name: 'Karevo Super Admin',
+    role: 'super_admin' as const,
+    status: 'active' as const,
+    passwordHash: await crypto.hashSecret(ADMIN_PASSWORD),
+    totpSecretEnc: null,
+    totpConfirmedAt: null,
+    twoFactorLastStep: null,
+  };
+  await prisma.adminUser.upsert({ where: { email: 'super.admin@karevo.test' }, create: { email: 'super.admin@karevo.test', ...adminData }, update: adminData });
+
   console.log(`Seeded ${DEMO.email} / ${DEMO.password} / NIN ${DEMO.nin}`);
+  console.log(`Org staff: org.admin@karevo.test, org.member@karevo.test / ${ORG_PASSWORD}`);
+  console.log(`Super admin: super.admin@karevo.test / ${ADMIN_PASSWORD} (set up MFA at first sign-in)`);
   await prisma.$disconnect();
 }
 

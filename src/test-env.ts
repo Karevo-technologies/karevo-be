@@ -7,6 +7,7 @@ export function setTestEnv() {
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
     CORS_ORIGINS: 'http://localhost:5173',
     JWT_ACCESS_SECRET: 'test-secret-that-is-at-least-32-characters-long',
+    JWT_ADMIN_SECRET: 'test-admin-secret-that-is-also-32-characters-plus',
     COOKIE_SECURE: 'false',
     BREACHED_PASSWORD_CHECK: 'false',
     DATA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),

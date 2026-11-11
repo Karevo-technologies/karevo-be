@@ -27,7 +27,7 @@ Return users through `toUserView()` (`src/common/presenters/user.presenter.ts`),
 ## Password
 
 - Verify `currentPassword` with `crypto.verifySecret`. If it is wrong, return `400 VALIDATION_FAILED` with `fields.currentPassword`. Don't return `401`: the client would treat that as an expired session.
-- Check the new password against `isBreachedPassword` (in the auth module).
+- Check the new password with `PasswordPolicyService.isBreached()` (in the auth module).
 - Hash it with `crypto.hashSecret` and save it.
 - Revoke every session except `me.sessionId`.
 - Record an `auth` event "Password changed".

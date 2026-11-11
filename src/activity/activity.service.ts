@@ -10,6 +10,9 @@ export interface ActivityContext {
 
 type Db = PrismaService | Prisma.TransactionClient;
 
+/** Badge shown next to an organisation activity entry. */
+export type OrgActivityStatus = 'pending' | 'approved' | 'declined' | 'viewed' | 'info';
+
 /**
  * Append-only audit log (spec: "Every write to records, consents, tokens,
  * sessions and PIN appends an ActivityEvent"). Pass the transaction client as
@@ -30,5 +33,17 @@ export class ActivityService {
         metadata: ctx.metadata,
       },
     });
+  }
+
+  /** The organisation-side log shown on the organisation dashboard's Activity page. */
+  recordOrg(
+    orgId: string,
+    memberId: string | null,
+    action: string,
+    description: string,
+    status: OrgActivityStatus,
+    db: Db = this.prisma,
+  ) {
+    return db.orgActivityEvent.create({ data: { orgId, memberId, action, description, status } });
   }
 }

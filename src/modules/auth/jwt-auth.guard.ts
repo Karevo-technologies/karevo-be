@@ -3,14 +3,17 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { IS_PUBLIC, REQUIRES_VERIFIED_NIN } from '../../common/auth/decorators';
+import { routeRealm } from '../../common/auth/realm';
 import { AccessTokenPayload } from '../../common/auth/request-user';
 import { AppException } from '../../common/errors/app.exception';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { SessionService } from './session.service';
 
 /**
- * Global guard. Every route needs a bearer access token unless marked
- * @Public(); routes marked @RequireVerifiedNin() also need a verified NIN.
+ * Global guard for the patient realm. Every patient route needs a bearer
+ * access token unless marked @Public(); routes marked @RequireVerifiedNin()
+ * also need a verified NIN. Organisation and admin routes (@UseRealm) are left
+ * to their own guards, which reject patient tokens.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -23,6 +26,7 @@ export class JwtAuthGuard implements CanActivate {
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const targets = [ctx.getHandler(), ctx.getClass()];
     if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets)) return true;
+    if (routeRealm(this.reflector, ctx) !== 'user') return true;
 
     const req = ctx.switchToHttp().getRequest<Request>();
     const [scheme, token] = (req.get('authorization') ?? '').split(' ');
