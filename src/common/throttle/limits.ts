@@ -9,5 +9,9 @@ export const LIMITS = {
   pin: { default: { limit: 10, ttl: 15 * MINUTE } },
   /** Routes that check a password or 2FA code for a signed-in user. */
   accountSecurity: { default: { limit: 10, ttl: 15 * MINUTE } },
+  /** Organisation patient lookups and visit QR redemption: slows enumeration of Karevo IDs. */
+  patientLookup: { default: { limit: 60, ttl: 15 * MINUTE } },
+  /** Admin audit searches (admin spec §6: monitor bulk searching). */
+  adminAudit: { default: { limit: 60, ttl: 15 * MINUTE } },
   shareTokenCreate: { default: { limit: 20, ttl: 60 * MINUTE } },
 };

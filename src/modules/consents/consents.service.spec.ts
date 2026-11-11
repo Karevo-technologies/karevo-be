@@ -23,6 +23,7 @@ describe('ConsentsService', () => {
     };
     activity = {
       record: jest.fn(),
+      recordOrg: jest.fn(),
     };
     service = new ConsentsService(prisma as PrismaService, activity as ActivityService);
   });
@@ -59,8 +60,11 @@ describe('ConsentsService', () => {
     const existing = {
       id: 'c-1',
       userId: 'user-1',
+      orgId: 'org-1',
       status: 'pending',
+      scope: ['blood'],
       org: mockOrg,
+      user: { karevoId: 'KV-0000-0001' },
     };
     prisma.consentRequest.findFirst.mockResolvedValue(existing);
     prisma.consentRequest.updateMany.mockResolvedValue({ count: 1 });
@@ -90,6 +94,15 @@ describe('ConsentsService', () => {
       'consent',
       expect.stringContaining('Granted Synlab access'),
       expect.anything(),
+      expect.anything(),
+    );
+    // The organisation sees the decision on its Activity page.
+    expect(activity.recordOrg).toHaveBeenCalledWith(
+      'org-1',
+      null,
+      'Request Approved',
+      expect.stringContaining('KV-0000-0001'),
+      'approved',
       expect.anything(),
     );
   });

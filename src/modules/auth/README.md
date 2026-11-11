@@ -52,7 +52,7 @@ Enabling and confirming 2FA is in the account module (D-01).
 `resetPassword`:
 
 - Find the token by `sha256(dto.token)`. It must be unused and unexpired; otherwise return `400 VALIDATION_FAILED` with a `token` field error.
-- Apply the register password rules, including `isBreachedPassword`.
+- Apply the register password rules, including `PasswordPolicyService.isBreached()`.
 - In one transaction: update `passwordHash`, set `usedAt`, revoke all of the user's sessions, and record an `auth` event "Password reset".
 
 ## Still to do here

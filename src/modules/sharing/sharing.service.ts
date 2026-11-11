@@ -16,7 +16,10 @@ import {
   ResolveScanDto,
   ScanResolveResponse,
   ShareTokenView,
+  VisitQrView,
 } from './dto/sharing.dto';
+
+const VISIT_QR_TTL_MS = 5 * 60 * 1000;
 
 const EXPIRY_DURATIONS_MS: Record<Exclude<ExpiryValue, 'single'>, number> = {
   '1h': 60 * 60 * 1000,
@@ -193,6 +196,22 @@ export class SharingService {
 
       await this.activity.record(me.id, 'consent', 'QR scan access confirmed', { metadata: { requestId } }, tx);
     });
+  }
+
+  /**
+   * Single-use code the patient shows as a QR at an in-person visit (plan Q2).
+   * It expires in 5 minutes; an organisation redeems it with POST /org/visits
+   * for a 2-hour visit grant. Only a SHA-256 of the code is stored.
+   */
+  async createVisitQr(me: RequestUser): Promise<VisitQrView> {
+    const code = `kvv1.${this.crypto.randomToken(24)}`;
+    const expiresAt = new Date(Date.now() + VISIT_QR_TTL_MS);
+    await this.prisma.$transaction(async (tx) => {
+      // Showing a new code cancels any earlier unused one.
+      await tx.visitQrToken.updateMany({ where: { userId: me.id, usedAt: null }, data: { usedAt: new Date() } });
+      await tx.visitQrToken.create({ data: { userId: me.id, codeHash: this.crypto.sha256(code), expiresAt } });
+    });
+    return { code, expiresAt: expiresAt.toISOString() };
   }
 
   private parseQrPayload(payload: string): { requestId: string } {

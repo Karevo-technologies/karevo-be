@@ -26,6 +26,48 @@ enum OrgKind {
   insurer
   pharmacy
   lab
+  clinic
+  school
+  employer
+  other
+}
+
+/// Organisation onboarding state, set by Karevo admins. `verified` mirrors status = verified.
+enum OrgStatus {
+  pending
+  verified
+  rejected
+  suspended
+}
+
+enum OrgRole {
+  admin
+  member
+}
+
+enum OrgMemberStatus {
+  invited
+  active
+  removed
+}
+
+enum AdminRole {
+  super_admin
+  compliance_officer
+  ops_support
+  analyst
+}
+
+enum AdminStatus {
+  active
+  disabled
+}
+
+/// How an organisation or admin came to read a record.
+enum AccessVia {
+  consent
+  visit
+  admin
 }
 
 /// Shared by consent scopes, share-token categories and record categories.
@@ -35,6 +77,7 @@ enum ShareCategory {
   allergies
   vaccines
   scripts
+  certificates
   full
 }
 
@@ -80,29 +123,29 @@ enum ExportStatus {
 }
 
 model User {
-  id               String    @id @default(uuid()) @db.Uuid
-  karevoId         String    @unique
-  name             String
+  id                 String    @id @default(uuid()) @db.Uuid
+  karevoId           String    @unique
+  name               String
   /// Stored lower-cased; uniqueness is case-insensitive by construction.
-  email            String    @unique
-  passwordHash     String
-  ninEnc           String
+  email              String    @unique
+  passwordHash       String
+  ninEnc             String
   /// HMAC of the NIN, for uniqueness checks and login comparison without decrypting.
-  ninHash          String    @unique
-  ninLast4         String
-  ninStatus        NinStatus @default(pending)
-  ninCheckedAt     DateTime?
-  pinHash          String?
-  pinFailedCount   Int       @default(0)
-  pinLockedUntil   DateTime?
-  twoFactorEnabled Boolean   @default(false)
+  ninHash            String    @unique
+  ninLast4           String
+  ninStatus          NinStatus @default(pending)
+  ninCheckedAt       DateTime?
+  pinHash            String?
+  pinFailedCount     Int       @default(0)
+  pinLockedUntil     DateTime?
+  twoFactorEnabled   Boolean   @default(false)
   /// TOTP secret, encrypted. Set on PUT /me/2fa, active once confirmed.
   twoFactorSecretEnc String?
   /// Last TOTP time step accepted; codes at or below it are refused (no replay).
-  twoFactorLastStep Int?
-  deactivatedAt    DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  twoFactorLastStep  Int?
+  deactivatedAt      DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   sessions       Session[]
   records        HealthRecord[]
@@ -114,6 +157,9 @@ model User {
   scanRequests   ScanRequest[]
   passwordResets PasswordResetToken[]
   exportJobs     DataExportJob[]
+  visitQrTokens  VisitQrToken[]
+  visitGrants    VisitGrant[]
+  recordAccesses RecordAccessEvent[]
 }
 
 /// One row per refresh token family; this is what the Devices list shows.
@@ -138,55 +184,264 @@ model Session {
 }
 
 model Organisation {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  kind      OrgKind
-  verified  Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id               String    @id @default(uuid()) @db.Uuid
+  name             String
+  kind             OrgKind
+  /// Kept in step with `status` (true only when verified); patient-facing views read it.
+  verified         Boolean   @default(false)
+  status           OrgStatus @default(pending)
+  /// Reason for the latest admin status change (rejection, suspension).
+  statusReason     String?
+  cacNumber        String?
+  email            String?
+  phone            String?
+  authorisedPerson String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
 
   records      HealthRecord[]
   consents     ConsentRequest[]
   scanRequests ScanRequest[]
+  members      OrgMember[]
+  visitGrants  VisitGrant[]
+  activity     OrgActivityEvent[]
+  recordAccess RecordAccessEvent[]
+
+  @@index([status])
+}
+
+/// Organisation staff. Invite-only: created `invited`, active once the invite is accepted.
+model OrgMember {
+  id           String          @id @default(uuid()) @db.Uuid
+  orgId        String          @db.Uuid
+  org          Organisation    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name         String
+  /// Lower-cased, unique across all organisations (it is the login name).
+  email        String          @unique
+  passwordHash String?
+  role         OrgRole         @default(member)
+  status       OrgMemberStatus @default(invited)
+  invitedById  String?         @db.Uuid
+  activatedAt  DateTime?
+  removedAt    DateTime?
+  createdAt    DateTime        @default(now())
+
+  invites         OrgInvite[]
+  sessions        OrgSession[]
+  uploadedRecords HealthRecord[]
+  consentRequests ConsentRequest[]
+  visitGrants     VisitGrant[]
+  recordAccess    RecordAccessEvent[]
+  activity        OrgActivityEvent[]
+
+  @@index([orgId, status])
+}
+
+model OrgInvite {
+  id        String    @id @default(uuid()) @db.Uuid
+  memberId  String    @db.Uuid
+  member    OrgMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the invite token; the token itself goes only into the invite link.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model OrgSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  memberId         String    @db.Uuid
+  member           OrgMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  refreshTokenHash String
+  deviceName       String
+  ip               String?
+  userAgent        String?
+  lastActiveAt     DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([memberId, revokedAt])
+}
+
+/// What happened in an organisation, for its Activity page.
+model OrgActivityEvent {
+  id          String       @id @default(uuid()) @db.Uuid
+  orgId       String       @db.Uuid
+  org         Organisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  memberId    String?      @db.Uuid
+  member      OrgMember?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  /// e.g. "Request Sent", "Request Approved", "Record Viewed"
+  action      String
+  description String
+  /// pending | approved | declined | viewed | info, for the UI badge
+  status      String
+  occurredAt  DateTime     @default(now())
+
+  @@index([orgId, occurredAt(sort: Desc)])
+}
+
+/// Single-use code a patient shows as a QR at an in-person visit (5 minutes).
+model VisitQrToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+/// Created when an organisation redeems a patient's visit QR: time-limited read access.
+model VisitGrant {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String       @db.Uuid
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId     String       @db.Uuid
+  org       Organisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  memberId  String       @db.Uuid
+  member    OrgMember    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime     @default(now())
+
+  recordAccess RecordAccessEvent[]
+
+  @@index([orgId, userId, expiresAt])
+}
+
+/// Append-only (a database trigger blocks UPDATE and DELETE): every read of a
+/// record by an organisation or an admin, written in the same transaction as the read.
+model RecordAccessEvent {
+  id           String          @id @default(uuid()) @db.Uuid
+  userId       String          @db.Uuid
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recordId     String          @db.Uuid
+  record       HealthRecord    @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  orgId        String?         @db.Uuid
+  org          Organisation?   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  memberId     String?         @db.Uuid
+  member       OrgMember?      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  adminId      String?         @db.Uuid
+  admin        AdminUser?      @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  via          AccessVia
+  consentId    String?         @db.Uuid
+  consent      ConsentRequest? @relation(fields: [consentId], references: [id], onDelete: Cascade)
+  visitGrantId String?         @db.Uuid
+  visitGrant   VisitGrant?     @relation(fields: [visitGrantId], references: [id], onDelete: Cascade)
+  reasonCode   String?
+  accessedAt   DateTime        @default(now())
+
+  @@index([userId, accessedAt(sort: Desc)])
+  @@index([orgId, accessedAt(sort: Desc)])
+}
+
+/// Karevo staff. MFA (TOTP) is mandatory: set up on first sign-in.
+model AdminUser {
+  id                String      @id @default(uuid()) @db.Uuid
+  email             String      @unique
+  name              String
+  role              AdminRole
+  passwordHash      String
+  totpSecretEnc     String?
+  /// Set once the first TOTP code is confirmed; until then sign-in requires setup.
+  totpConfirmedAt   DateTime?
+  twoFactorLastStep Int?
+  status            AdminStatus @default(active)
+  lastLoginAt       DateTime?
+  createdAt         DateTime    @default(now())
+
+  sessions     AdminSession[]
+  actions      AdminActionLog[]
+  recordAccess RecordAccessEvent[]
+}
+
+model AdminSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  adminId          String    @db.Uuid
+  admin            AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  refreshTokenHash String
+  deviceName       String
+  ip               String?
+  userAgent        String?
+  lastActiveAt     DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([adminId, revokedAt])
+}
+
+/// Append-only (a database trigger blocks UPDATE and DELETE): every state-changing admin action.
+model AdminActionLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  adminId    String    @db.Uuid
+  admin      AdminUser @relation(fields: [adminId], references: [id])
+  /// e.g. "org.approve", "user.nin_verify"
+  action     String
+  targetType String
+  targetId   String
+  reasonCode String
+  note       String?
+  metadata   Json?
+  occurredAt DateTime  @default(now())
+
+  @@index([adminId, occurredAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@index([occurredAt(sort: Desc)])
 }
 
 model HealthRecord {
-  id         String        @id @default(uuid()) @db.Uuid
-  userId     String        @db.Uuid
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  issuedById String        @db.Uuid
-  issuedBy   Organisation  @relation(fields: [issuedById], references: [id])
+  id                 String        @id @default(uuid()) @db.Uuid
+  userId             String        @db.Uuid
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issuedById         String        @db.Uuid
+  issuedBy           Organisation  @relation(fields: [issuedById], references: [id])
   /// Free-text display type, e.g. "Blood Test Result".
-  type       String
+  type               String
   /// Which consent scope / share category covers this record (never "full").
-  category   ShareCategory
-  issuedDate DateTime      @db.Date
-  summary    String
-  detailsEnc String
-  receivedAt DateTime      @default(now())
+  category           ShareCategory
+  issuedDate         DateTime      @db.Date
+  summary            String
+  detailsEnc         String
+  /// Set when uploaded through the organisation dashboard.
+  title              String?
+  notesEnc           String?
+  uploadedByMemberId String?       @db.Uuid
+  uploadedBy         OrgMember?    @relation(fields: [uploadedByMemberId], references: [id], onDelete: SetNull)
+  receivedAt         DateTime      @default(now())
+
+  accessEvents RecordAccessEvent[]
 
   @@index([userId, receivedAt(sort: Desc)])
+  @@index([userId, category])
 }
 
 /// Pending, active and history tabs are all views of `status`.
 model ConsentRequest {
-  id            String          @id @default(uuid()) @db.Uuid
-  userId        String          @db.Uuid
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  orgId         String          @db.Uuid
-  org           Organisation    @relation(fields: [orgId], references: [id])
-  scope         ShareCategory[]
-  purpose       String
-  requestedDays Int
-  requestedAt   DateTime        @default(now())
-  status        ConsentStatus   @default(pending)
-  grantedDays   Int?
-  grantedAt     DateTime?
-  expiresAt     DateTime?
-  resolvedAt    DateTime?
-  note          String?
+  id                  String          @id @default(uuid()) @db.Uuid
+  userId              String          @db.Uuid
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId               String          @db.Uuid
+  org                 Organisation    @relation(fields: [orgId], references: [id])
+  scope               ShareCategory[]
+  purpose             String
+  requestedDays       Int
+  requestedAt         DateTime        @default(now())
+  status              ConsentStatus   @default(pending)
+  grantedDays         Int?
+  grantedAt           DateTime?
+  expiresAt           DateTime?
+  resolvedAt          DateTime?
+  note                String?
+  requestedByMemberId String?         @db.Uuid
+  requestedBy         OrgMember?      @relation(fields: [requestedByMemberId], references: [id], onDelete: SetNull)
+
+  accessEvents RecordAccessEvent[]
 
   @@index([userId, status])
   @@index([status, expiresAt])
+  @@index([orgId, status])
 }
 
 model ShareToken {
@@ -223,14 +478,14 @@ model ScanRequest {
 }
 
 model LinkedId {
-  id        String         @id @default(uuid()) @db.Uuid
-  userId    String         @db.Uuid
-  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      LinkedIdType
-  numberEnc String
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @db.Uuid
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        LinkedIdType
+  numberEnc   String
   numberLast4 String
-  status    LinkedIdStatus @default(pending)
-  createdAt DateTime       @default(now())
+  status      LinkedIdStatus @default(pending)
+  createdAt   DateTime       @default(now())
 
   @@unique([userId, type])
 }

@@ -93,3 +93,9 @@ export interface ScanResolveResponse {
   requestedCategories: ShareCategory[];
   requestId: string;
 }
+
+export interface VisitQrView {
+  /** Encode this string as the QR the organisation scans */
+  code: string;
+  expiresAt: string;
+}

@@ -23,6 +23,7 @@ import {
   ResolveScanDto,
   ScanResolveResponse,
   ShareTokenView,
+  VisitQrView,
 } from './dto/sharing.dto';
 import { SharingService } from './sharing.service';
 
@@ -73,5 +74,20 @@ export class ScanController {
     @Body() dto: ConfirmScanDto,
   ): Promise<void> {
     return this.sharing.confirmScan(me, requestId, dto);
+  }
+}
+
+/** In-person visits: the patient shows this QR and the organisation scans it. */
+@ApiTags('Sharing')
+@ApiBearerAuth()
+@Controller('me')
+export class VisitQrController {
+  constructor(private readonly sharing: SharingService) {}
+
+  @Post('visit-qr')
+  @RequireVerifiedNin()
+  @Throttle(LIMITS.shareTokenCreate)
+  create(@CurrentUser() me: RequestUser): Promise<VisitQrView> {
+    return this.sharing.createVisitQr(me);
   }
 }

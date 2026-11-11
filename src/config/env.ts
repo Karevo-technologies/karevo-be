@@ -26,7 +26,12 @@ export const envSchema = z.object({
   COOKIE_SECURE: boolish.default('true'),
   DATA_ENCRYPTION_KEY: base64Key('DATA_ENCRYPTION_KEY'),
   BLIND_INDEX_KEY: base64Key('BLIND_INDEX_KEY'),
-  NIN_PROVIDER: z.enum(['stub']).default('stub'),
+  /** Signs admin tokens. Must differ from JWT_ACCESS_SECRET, so the realms never share a token namespace. */
+  JWT_ADMIN_SECRET: z.string().min(32),
+  /** Base URL of the organisation dashboard, used to build invite links. */
+  ORG_DASHBOARD_URL: z.string().url().default('http://localhost:3000'),
+  /** stub: auto-verify (development only). manual: Karevo admins verify NINs. */
+  NIN_PROVIDER: z.enum(['stub', 'manual']).default('stub'),
   /** Query the Have I Been Pwned range API for new passwords (D-11). */
   BREACHED_PASSWORD_CHECK: boolish.default('true'),
 });

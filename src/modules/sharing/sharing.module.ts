@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { ScanController, ShareTokensController } from './sharing.controller';
+import { ScanController, ShareTokensController, VisitQrController } from './sharing.controller';
 import { SharingService } from './sharing.service';
 
 @Module({
-  controllers: [ShareTokensController, ScanController],
+  controllers: [ShareTokensController, ScanController, VisitQrController],
   providers: [SharingService],
 })
 export class SharingModule {}

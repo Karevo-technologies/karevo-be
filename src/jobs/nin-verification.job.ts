@@ -22,7 +22,7 @@ export class NinVerificationJob {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async run() {
-    if (this.running) return;
+    if (this.running || !this.provider.automatic) return;
     this.running = true;
     try {
       const users = await this.prisma.user.findMany({

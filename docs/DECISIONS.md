@@ -1,6 +1,6 @@
 # Decisions
 
-These are the places where the backend departs from, or adds to, the **Karevo Users Dashboard — Backend Technical Spec** (Oct 28, 2026). Each entry says what was decided and why. Review them, and change the spec or the code wherever you disagree.
+These are the places where the backend departs from, or adds to, its specs: the **Karevo Users Dashboard — Backend Technical Spec** (Oct 28, 2026) for D-01 to D-21, and the admin spec plus [ORG_AND_ADMIN_PLAN.md](ORG_AND_ADMIN_PLAN.md) for D-22 onwards. Each entry says what was decided and why. Review them, and change the spec or the code wherever you disagree.
 
 Status: **Proposed** until reviewed. Change it to **Accepted** or **Rejected** in the entry itself.
 
@@ -113,7 +113,9 @@ Codes added to the spec's table:
 
 ### D-11 · Breached-password check · Proposed
 
-A small local deny-list stands in for now (`password-policy.ts`). Before launch, replace it with a k-anonymity check against Have I Been Pwned, or an offline copy of that list.
+`PasswordPolicyService` (`password-policy.ts`) checks every new password: patient sign-up, password reset and change, and organisation invite acceptance. It first checks a small local deny-list, then the Have I Been Pwned range API. Only the first 5 hex characters of the password's SHA-1 hash leave the server.
+
+If the API is down or slow, the check **fails open** and the password is allowed, so an outage never blocks sign-up. `BREACHED_PASSWORD_CHECK=false` turns the remote check off; the tests do this.
 
 ### D-12 · The session is checked on every request · Proposed
 
@@ -164,3 +166,88 @@ The challenge is a `200` with `twoFactorRequired: true`, not an error status. It
 ### D-17 · The consent `history` tab · Proposed
 
 `?status=history` means status `declined`, `revoked` or `expired`. `pending` and `active` map one-to-one to their status.
+
+## Organisation and admin APIs
+
+These entries come from [ORG_AND_ADMIN_PLAN.md](ORG_AND_ADMIN_PLAN.md), which is where the product questions (Q1–Q7) were settled. The details are in the [org](../src/modules/org/README.md) and [admin](../src/modules/admin/README.md) module READMEs.
+
+### D-22 · Three separate login realms · Proposed
+
+Patients, organisation staff and Karevo admins each have their own account table, session table, token `typ` and refresh cookie:
+
+| Realm | Table | Token `typ` | Cookie | Path |
+| --- | --- | --- | --- | --- |
+| Patient | `User` | `access` | `karevo_rt` | `/api/v1/auth` |
+| Organisation | `OrgMember` | `org_access` | `karevo_org_rt` | `/api/v1/org/auth` |
+| Admin | `AdminUser` | `admin_access` | `karevo_admin_rt` | `/api/v1/admin/auth` |
+
+Admin tokens are signed with `JWT_ADMIN_SECRET`, which must differ from `JWT_ACCESS_SECRET` (admin spec §2.1). Each realm's guard refuses the other two realms' tokens, and the wiring test checks every pair.
+
+One table with a `role` column would have been less code, but then a single bug in a role check could let a patient token reach organisation or admin routes. Separate realms make that mistake a type error and a failing test instead.
+
+Session rotation, replay detection (D-13) and per-request checks (D-12) are shared through `src/common/sessions`. Session lifetimes: organisation 7 days with a 1-hour idle limit; admin 12 hours with a 15-minute idle limit.
+
+### D-23 · Admin MFA is mandatory, set up at first sign-in · Proposed
+
+Admins have no account settings page, so MFA can't be opt-in the way it is for patients (D-01). On an admin's first sign-in, the login response includes a `setupUri`. The first valid code both confirms the authenticator and completes the sign-in. After that, every sign-in needs a code.
+
+Admins are created only with `npm run admin:create`, which prints a one-time password. There is no admin sign-up and no way to manage admins from the console yet.
+
+Known gap: there is no MFA reset. If an admin loses their authenticator, clear `totpSecretEnc` and `totpConfirmedAt` in the database, and they set it up again at their next sign-in.
+
+### D-24 · Manual NIN verification · Proposed
+
+No NIN vendor is contracted, and the stub provider (D-21) can't run in production. `NIN_PROVIDER=manual` leaves every NIN `pending` and turns off the verification job. Admins then decide with `POST /admin/users/:id/nin {decision: verified | failed, reasonCode, note?}`.
+
+The plan named this `POST /admin/users/:id/nin/verify`. It became one route with a `decision` field so that a failure is recorded the same way as a success.
+
+Production should use `manual` until a vendor's provider is written. `render.yaml` sets it.
+
+### D-25 · No 2FA for organisation staff in the beta · Proposed
+
+Staff sign in with email and password only. Every staff account is created by invitation, organisation access is limited to verified organisations, and every record read is audited (D-28). Add TOTP for staff, along with a staff password reset, before general availability. Until then, an organisation admin can re-invite a member who has forgotten their password.
+
+### D-26 · Invite responses include the invite link · Proposed
+
+`POST /org/members`, `POST /org/members/:id/invite`, `POST /admin/orgs` and `POST /admin/orgs/:id/admins` return `inviteUrl` (`ORG_DASHBOARD_URL/auth/accept-invite?token=…`). No email is sent yet, so the person sending the invite passes the link on themselves.
+
+The link is a credential: it sets the account's password. The token is stored only as a SHA-256 hash, works once, and stops working when a new invite is sent. When email delivery is live, stop returning `inviteUrl`.
+
+### D-27 · Audit tables are append-only in the database · Proposed
+
+The admin spec requires a tamper-evident audit trail. A Postgres trigger refuses `UPDATE` and `DELETE` on `AdminActionLog` and `RecordAccessEvent`, so the application can't change history even with a bug or a compromised service account.
+
+The only bypass is the transaction-local setting `karevo.audit_maintenance = 'on'`, which the development seed uses to reset demo data. The application never sets it.
+
+A user with database owner rights can still drop the trigger. Before launch, run the application as a database role that doesn't own these tables.
+
+### D-28 · Organisations read records only through a consent or a visit, and every read is audited · Proposed
+
+An organisation can read a patient's records only through:
+
+- an active, unexpired consent whose scope covers the record's category (D-06), or
+- a visit grant, which lasts 2 hours and covers every record.
+
+Each read writes one `RecordAccessEvent` per record, plus an entry in both the patient's and the organisation's activity, all **in the same transaction as the read**. If those writes fail, the read fails, so no read goes unrecorded. Record lists without contents (`GET /org/records`) are not audited.
+
+**Visit QR (plan Q2).** The patient creates a code with `POST /me/visit-qr` (needs a verified NIN), and the organisation redeems it with `POST /org/visits`. Codes are single-use, last 5 minutes and are stored only as a SHA-256 hash. If a code is redeemed twice at once, only one redemption is accepted.
+
+### D-29 · Organisation status controls access · Proposed
+
+`Organisation.status` (`pending | verified | rejected | suspended`) replaces the boolean `verified`, and the migration keeps existing verified rows verified.
+
+- Admins move organisations between statuses, and every change needs a reason code. The allowed transitions are in the admin README.
+- Until an organisation is `verified`, its staff can sign in, edit the profile and invite the team, but patient routes return `403 ORG_NOT_VERIFIED`.
+- Rejecting or suspending an organisation revokes every staff session, and the per-request session check refuses it from then on.
+
+### D-30 · Admin action logging · Proposed
+
+Every admin state change carries a `reasonCode` from a fixed list (`REASON_CODES`), so the log can be queried, and `other` requires a note. The log entry is written in the same transaction as the change.
+
+Some reads are logged as well: looking up a patient (`user.view`) and failed sign-ins. That way, unusual browsing of patient accounts appears in the audit trail. Admins see patient metadata only, never record contents.
+
+### D-31 · Health check and deployment · Proposed
+
+`GET /api/v1/health` is public and not rate-limited. It returns `200` when the database answers and `503` when it doesn't, so Render restarts or holds traffic.
+
+`npm start` runs `node dist/main`. Running `nest start` in production recompiles TypeScript and ran out of memory on Render. `render.yaml` builds once, runs `prisma migrate deploy` at start, and uses a paid instance, because the free plan sleeps and that stops the scheduled jobs.
