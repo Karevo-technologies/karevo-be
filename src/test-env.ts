@@ -8,6 +8,7 @@ export function setTestEnv() {
     CORS_ORIGINS: 'http://localhost:5173',
     JWT_ACCESS_SECRET: 'test-secret-that-is-at-least-32-characters-long',
     COOKIE_SECURE: 'false',
+    BREACHED_PASSWORD_CHECK: 'false',
     DATA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
     BLIND_INDEX_KEY: randomBytes(32).toString('base64'),
   });

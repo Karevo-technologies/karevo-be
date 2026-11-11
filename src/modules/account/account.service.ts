@@ -9,7 +9,7 @@ import { isTrivialPin } from '../../common/validation/rules';
 import { CryptoService } from '../../crypto/crypto.service';
 import { generateTotpSecret } from '../../crypto/totp';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isBreachedPassword } from '../auth/password-policy';
+import { PasswordPolicyService } from '../auth/password-policy';
 import { consumeTotpCode } from '../auth/two-factor';
 import {
   ChangePasswordDto,
@@ -30,6 +30,7 @@ export class AccountService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly activity: ActivityService,
+    private readonly passwordPolicy: PasswordPolicyService,
   ) {}
 
   async getMe(me: RequestUser): Promise<UserView> {
@@ -56,7 +57,7 @@ export class AccountService {
       throw AppException.validation({ currentPassword: 'Incorrect current password' });
     }
 
-    if (isBreachedPassword(dto.newPassword)) {
+    if (await this.passwordPolicy.isBreached(dto.newPassword)) {
       throw AppException.validation({ newPassword: 'This password is too common. Choose another.' });
     }
 

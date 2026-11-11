@@ -3,6 +3,7 @@ import { ActivityService } from '../../activity/activity.service';
 import { CryptoService } from '../../crypto/crypto.service';
 import { currentTotpStep, generateTotpCode, generateTotpSecret } from '../../crypto/totp';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PasswordPolicyService } from '../auth/password-policy';
 import { AccountService } from './account.service';
 
 describe('AccountService', () => {
@@ -48,6 +49,7 @@ describe('AccountService', () => {
       prisma as PrismaService,
       crypto as CryptoService,
       activity as ActivityService,
+      { isBreached: jest.fn(async () => false) } as unknown as PasswordPolicyService,
     );
   });
 

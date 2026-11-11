@@ -8,6 +8,7 @@ import { CryptoService } from '../../crypto/crypto.service';
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
+import { PasswordPolicyService } from './password-policy';
 import { SessionService } from './session.service';
 
 const client = { ip: '127.0.0.1', userAgent: 'Mozilla/5.0 (Windows NT 10.0) Chrome/130.0' };
@@ -50,8 +51,9 @@ async function setup(userOverrides: Record<string, unknown> = {}) {
   const activity = { record: jest.fn() } as unknown as ActivityService;
   const jwt = new JwtService({ secret: 'test-secret-that-is-at-least-32-characters-long' });
   const mail = { sendPasswordResetLink: jest.fn() } as unknown as MailService;
+  const passwordPolicy = { isBreached: jest.fn(async () => false) } as unknown as PasswordPolicyService;
   return {
-    service: new AuthService(prisma as PrismaService, crypto, sessions, activity, jwt, mail),
+    service: new AuthService(prisma as PrismaService, crypto, sessions, activity, jwt, mail, passwordPolicy),
     prisma,
     sessions,
     activity,

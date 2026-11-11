@@ -16,7 +16,7 @@ import {
   TwoFactorChallengeResponse,
   TwoFactorVerifyDto,
 } from './dto/auth.dto';
-import { isBreachedPassword } from './password-policy';
+import { PasswordPolicyService } from './password-policy';
 import { SessionService } from './session.service';
 import { consumeTotpCode } from './two-factor';
 
@@ -38,10 +38,11 @@ export class AuthService {
     private readonly activity: ActivityService,
     private readonly jwt: JwtService,
     private readonly mail: MailService,
+    private readonly passwordPolicy: PasswordPolicyService,
   ) {}
 
   async register(dto: RegisterDto, client: ClientContext): Promise<{ body: AuthResponse; refreshToken: string }> {
-    if (isBreachedPassword(dto.password)) {
+    if (await this.passwordPolicy.isBreached(dto.password)) {
       throw AppException.validation({ password: 'This password is too common. Choose another.' });
     }
 
@@ -221,7 +222,7 @@ export class AuthService {
       throw invalidLink();
     }
 
-    if (isBreachedPassword(dto.newPassword)) {
+    if (await this.passwordPolicy.isBreached(dto.newPassword)) {
       throw AppException.validation({ newPassword: 'This password is too common. Choose another.' });
     }
 
